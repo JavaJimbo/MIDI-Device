@@ -3,13 +3,14 @@
  * FileName:    main.c
  * 5-28-17:     Stripped all non-PIC795 code.
  * 5-30-17:     Records and plays back on LMMS. Servo number is built in to velocity.
+ * 6-1-17:      Fixed NOTE OFF bug. Works well at 16 ms sampling rate with servo 0.
  * 
  ***************************************************************************************/
 
 #ifndef MAIN_C
 #define MAIN_C
 
-#define FRAME_DELAY 17
+#define FRAME_DELAY 8
 
 #define true TRUE
 #define false FALSE
@@ -92,6 +93,9 @@ unsigned short ADresult[MAXPOTS]; // read the result of channel 0 conversion fro
 void ConfigAd(void);
 
 unsigned char frameFlag = FALSE;
+unsigned short milliSecondCounter = 0;
+
+unsigned char runMode = FALSE;
 
 int main(void) {
     InitializeSystem();
@@ -107,6 +111,21 @@ int main(void) {
 #endif
 
     while (1) {
+
+        if (milliSecondCounter > 100) {
+            milliSecondCounter = 0;
+            if (sw2 == 0) {
+                if (runMode) {
+                    runMode = FALSE;
+                    printf("\rSTANDBY MODE");
+                } else {
+                    runMode = TRUE;
+                    printf("\rRUN MODE");
+                }
+                while (sw2 == 0);
+            }
+        }
+
 #if defined(USB_POLLING)
         // Check bus status and service USB interrupts.
         USBDeviceTasks();
@@ -431,6 +450,7 @@ void __ISR(_TIMER_2_VECTOR, ipl5) Timer2Handler(void) {
 
     mT2ClearIntFlag(); // clear the interrupt flag
 
+    milliSecondCounter++;
     frameDelay++;
     if (frameDelay >= FRAME_DELAY) {
         frameDelay = 0;
@@ -444,13 +464,15 @@ void __ISR(_TIMER_2_VECTOR, ipl5) Timer2Handler(void) {
 
 void ProcessIO(void) {
     static BYTE pitch = 0x3C;
-    unsigned short potValue = 0;
+    short potValue = 0;
+    static short previousPotValue = 0;
     static unsigned char sentNoteOff = TRUE;
     static unsigned char LEDflag = TRUE;
     unsigned char MIDIreceivedCommand;
     static unsigned short USBtimeout = 0;
     unsigned char RXcommandServoNumber;
     unsigned char TXcommandServoNumber = 1;
+    static unsigned short LEDcounter = 0;
 
     if (HOSTRxBufferFull) {
         printf("\rRECEIVED: %s", HOSTRxBuffer);
@@ -464,29 +486,26 @@ void ProcessIO(void) {
     if ((USBDeviceState < CONFIGURED_STATE) || (USBSuspendControl == 1)) return;
 
     if (!USBHandleBusy(USBRxHandle)) {
-        //We have received a MIDI packet from the host, process it and then
-        //  prepare to receive the next packet
-
-        //INSERT MIDI PROCESSING CODE HERE
-
-        //Get ready for next packet (this will overwrite the old data)
         USBRxHandle = USBRxOnePacket(MIDI_EP, (BYTE*) & ReceivedDataBuffer, 64);
-        if (LEDflag) {
-            mLED_4_On();
-            LEDflag = FALSE;
-            LATBbits.LATB2 = 1;
-        } else {
-            mLED_4_Off();
-            LEDflag = TRUE;
-            LATBbits.LATB2 = 0;
+        LEDcounter++;
+        if (LEDcounter > 10) {
+            LEDcounter = 0;
+            if (LEDflag) {
+                mLED_4_On();
+                LEDflag = FALSE;
+                LATBbits.LATB2 = 1;
+            } else {
+                mLED_4_Off();
+                LEDflag = TRUE;
+                LATBbits.LATB2 = 0;
+            }
         }
-
-        MIDIreceivedCommand = ReceivedDataBuffer[1] & 0xF0;        
+        USBtimeout = 30;
+        MIDIreceivedCommand = ReceivedDataBuffer[1] & 0xF0;
 
         if (MIDIreceivedCommand == 0x90 && ReceivedDataBuffer[3] != 0) {
-            RXcommandServoNumber = (ReceivedDataBuffer[3] - 1) & 0x0F;
-            USBtimeout = 30;
-            printf("\r%X, %X, %X, %X", ReceivedDataBuffer[0], ReceivedDataBuffer[1], ReceivedDataBuffer[2], ReceivedDataBuffer[3]);
+            RXcommandServoNumber = (ReceivedDataBuffer[3] - 1) & 0x0F;           
+            printf("\r%d> %X, %X, %X, %X", RXcommandServoNumber, ReceivedDataBuffer[0], ReceivedDataBuffer[1], ReceivedDataBuffer[2], ReceivedDataBuffer[3]);
             if (XBEETxLength == 0) {
                 XBEETxBuffer[0] = RXcommandServoNumber;
                 XBEETxBuffer[1] = ReceivedDataBuffer[2] * 2;
@@ -497,65 +516,52 @@ void ProcessIO(void) {
                 INTEnable(INT_SOURCE_UART_TX(XBEEuart), INT_ENABLED);
             }
         }
-    } else if (sw2 != 0) {
-        mLED_2_Off();
-        mLED_4_Off();
     }
-
-    //if (frameFlag) {
-    //    frameFlag = FALSE;
-
-    if (!USBHandleBusy(USBTxHandle)) {
-        if (sentNoteOff == FALSE) {
+    if (frameFlag) {
+        frameFlag = FALSE;
+        if (sentNoteOff == FALSE && !USBHandleBusy(USBTxHandle)) {
             midiData.Val = 0; // must set all unused values to 0 
             midiData.CableNumber = 0;
-            midiData.CodeIndexNumber = MIDI_CIN_NOTE_ON;
-            midiData.DATA_0 = 0x90; //Note off
+            midiData.CodeIndexNumber = MIDI_CIN_NOTE_OFF;
+            midiData.DATA_0 = 0x80; //Note off
             midiData.DATA_1 = pitch; //pitch
-            midiData.DATA_2 = 0x00;            
-
+            midiData.DATA_2 = 0x00;
             USBTxHandle = USBTxOnePacket(MIDI_EP, (BYTE*) & midiData, 4);
             sentNoteOff = TRUE;
-        } else if (sw2 == 0 && frameFlag) {
-            if (USBtimeout) USBtimeout--;
-            frameFlag = FALSE;
-            if (LEDflag) {
-                mLED_2_On();
-                LEDflag = FALSE;
-                LATBbits.LATB2 = 1;
-            } else {
-                mLED_2_Off();
-                LEDflag = TRUE;
-                LATBbits.LATB2 = 0;
+        } else {
+            if (USBtimeout) {
+                USBtimeout--;
+                if (!USBtimeout) mLED_4_Off();
             }
-
-            potValue = (ADresult[0] / 8) + 1;
+            potValue = ADresult[0] / 4;
             ConfigAd();
-            if (potValue > 127) potValue = 127;
-            if (pitch != potValue){
-                pitch = potValue; //  + 0x3C;                
-                midiData.Val = 0; //must set all unused values to 0
-                midiData.CableNumber = 0;
-                midiData.CodeIndexNumber = MIDI_CIN_NOTE_ON;
-                midiData.DATA_0 = 0x90; //Note on
-                midiData.DATA_1 = pitch; //pitch
-                midiData.DATA_2 = 0x40 | (TXcommandServoNumber + 1);
-            
-                USBTxHandle = USBTxOnePacket(MIDI_EP, (BYTE*) & midiData, 4);
-                sentNoteOff = FALSE;
-            }
-            if (!USBtimeout && XBEETxLength == 0) {
-                XBEETxBuffer[0] = 0;
-                XBEETxBuffer[1] = pitch * 2;
-                if (XBEETxBuffer[1] == 0xFF) XBEETxBuffer[1] = 254;
-                XBEETxLength = 2;
-                while (!UARTTransmitterIsReady(XBEEuart));
-                UARTSendDataByte(XBEEuart, 0xFF); // Send SSC Servo start character
-                INTEnable(INT_SOURCE_UART_TX(XBEEuart), INT_ENABLED);
-            }
-        }
-    }
-    //}
+            if (potValue > 254) potValue = 254;
+            if (abs(potValue - previousPotValue) > 1) {
+                mLED_2_On();
+                previousPotValue = potValue;
+                if (runMode && !USBHandleBusy(USBTxHandle)) {
+                    midiData.Val = 0; //must set all unused values to 0
+                    midiData.CableNumber = 0;
+                    midiData.CodeIndexNumber = MIDI_CIN_NOTE_ON;
+                    midiData.DATA_0 = 0x90; //Note on
+                    pitch = (BYTE) (potValue / 2);
+                    if (pitch > 127) pitch = 127;
+                    midiData.DATA_1 = pitch; //pitch
+                    midiData.DATA_2 = 0x40 | (TXcommandServoNumber + 1);
+                    USBTxHandle = USBTxOnePacket(MIDI_EP, (BYTE*) & midiData, 4);
+                    sentNoteOff = FALSE;
+                } else if (!runMode && XBEETxLength == 0) {
+                    XBEETxBuffer[0] = 0;
+                    XBEETxBuffer[1] = (unsigned char) potValue;
+                    XBEETxLength = 2;
+                    while (!UARTTransmitterIsReady(XBEEuart));
+                    UARTSendDataByte(XBEEuart, 0xFF); // Send SSC Servo start character
+                    INTEnable(INT_SOURCE_UART_TX(XBEEuart), INT_ENABLED);
+                    printf("\r%d", potValue);
+                }
+            } else mLED_2_Off();
+        } // end else
+    } // end if (frameFlag)
 }//end ProcessIO
 
 void __ISR(XBEE_VECTOR, ipl2) IntXbeeHandler(void) {
