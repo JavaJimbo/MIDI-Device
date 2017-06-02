@@ -1,11 +1,11 @@
-/***************************************************************************************
+/***********************************************************************************************************
  * PROJECT:     MIDI Demo
  * FileName:    main.c
  * 5-28-17:     Stripped all non-PIC795 code.
  * 5-30-17:     Records and plays back on LMMS. Servo number is built in to velocity.
  * 6-1-17:      Fixed NOTE OFF bug. Works well at 16 ms sampling rate with servo 0.
- * 
- ***************************************************************************************/
+ * 6-1-17:      Assigns channel numbers to servos. Implemented HOST keyboard menu to enable/disable servos.
+ ************************************************************************************************************/
 
 #ifndef MAIN_C
 #define MAIN_C
@@ -87,6 +87,7 @@ unsigned char XBEERxBuffer[MAXBUFFER];
 unsigned short XBEETxLength = 0;
 unsigned char XBEETxBuffer[MAXBUFFER];
 
+#define MAXSERVO 7
 #define MAXPOTS 1
 unsigned short ADresult[MAXPOTS]; // read the result of channel 0 conversion from the idle buffer
 
@@ -96,33 +97,85 @@ unsigned char frameFlag = FALSE;
 unsigned short milliSecondCounter = 0;
 
 unsigned char runMode = FALSE;
+unsigned char displayMode = TRUE;
+short servoNumber = 0;
+
+unsigned char controlCommand = 0;
+short getInteger(unsigned char *ptrString);
+unsigned char getCommand(unsigned char *ptrString);
+
+#define SET_DISPLAY 4 // CTL-D
+#define SET_SERVO 19 // CTL-S
+#define SET_RUN 18 // CTL-R
+#define NUMBER_ERROR 32767
 
 int main(void) {
+    short value = 0;
+    unsigned char command = 0;
+
     InitializeSystem();
     mLED_1_Off();
     mLED_2_Off();
     mLED_3_Off();
     mLED_4_Off();
 
-    printf("\rTESTING MIDI I/O");
+    printf("\r\rTESTING MIDI MENU MODE");
 
 #if defined(USB_INTERRUPT)
     USBDeviceAttach();
 #endif
 
     while (1) {
-
-        if (milliSecondCounter > 100) {
-            milliSecondCounter = 0;
-            if (sw2 == 0) {
-                if (runMode) {
-                    runMode = FALSE;
-                    printf("\rSTANDBY MODE");
-                } else {
-                    runMode = TRUE;
-                    printf("\rRUN MODE");
+        if (controlCommand) {
+            printf("\rCONTROL: %d", controlCommand);
+            switch (controlCommand) {
+                case SET_SERVO:
+                    runMode = displayMode = FALSE;
+                    printf("\rSET SERVO");
+                    break;
+                case SET_DISPLAY:
+                    if (displayMode) {
+                        displayMode = FALSE;
+                        printf("\rDISPLAY OFF");
+                    } else {
+                        displayMode = TRUE;
+                        printf("\rDISPLAY ON");
+                    }
+                    break;                    
+                case SET_RUN:
+                    if (runMode) {
+                        runMode = FALSE;
+                        printf("\rSTANDBY MODE");
+                    } else {
+                        runMode = TRUE;
+                        printf("\rRUN MODE");
+                    }
+                    break;
+                default:
+                    break;
+            }
+            controlCommand = 0;
+        } else if (HOSTRxBufferFull) {
+            HOSTRxBufferFull = FALSE;
+            if (!runMode){
+                command = getCommand(HOSTRxBuffer);
+                switch(command){
+                    case 'S':
+                        value = getInteger(HOSTRxBuffer);
+                        if (value == NUMBER_ERROR) printf("\rNo number entered");
+                        else if (value < 0 || value > MAXSERVO) printf("\rInvalid Servo");
+                        else {
+                            servoNumber = (unsigned char) value;
+                            printf("\rSERVO: %d", servoNumber);
+                        }
+                        break;
+                    default: printf("\rNO COMMAND");
+                        break;
                 }
-                while (sw2 == 0);
+                if (command) {
+                    value = getInteger(HOSTRxBuffer);
+                    printf("\rValue: %d", value);
+                } else printf("\rNO COMMAND");
             }
         }
 
@@ -306,34 +359,6 @@ BOOL USER_USB_CALLBACK_EVENT_HANDLER(int event, void *pdata, WORD size) {
     return TRUE;
 }
 
-// HOST UART interrupt handler it is set at priority level 2
-
-void __ISR(HOST_VECTOR, ipl2) IntHostUartHandler(void) {
-    static unsigned short HOSTRxIndex = 0;
-    unsigned char ch;
-
-    if (HOSTbits.OERR || HOSTbits.FERR) {
-        if (UARTReceivedDataIsAvailable(HOSTuart))
-            ch = UARTGetDataByte(HOSTuart);
-        HOSTbits.OERR = 0;
-        HOSTRxIndex = 0;
-    } else if (INTGetFlag(INT_SOURCE_UART_RX(HOSTuart))) {
-        INTClearFlag(INT_SOURCE_UART_RX(HOSTuart));
-        if (UARTReceivedDataIsAvailable(HOSTuart)) {
-            ch = UARTGetDataByte(HOSTuart);
-            if (HOSTRxIndex < MAXBUFFER) HOSTRxBuffer[HOSTRxIndex++] = ch;
-            if (ch == '\r') {
-                HOSTRxBuffer[HOSTRxIndex] = '\0'; // $$$$
-                HOSTRxBufferFull = TRUE;
-                HOSTRxIndex = 0;
-            }
-        }
-    }
-    if (INTGetFlag(INT_SOURCE_UART_TX(HOSTuart))) {
-        INTClearFlag(INT_SOURCE_UART_TX(HOSTuart));
-    }
-}
-
 void ConfigAd(void) {
 
     mPORTBSetPinsAnalogIn(BIT_0); // $$$$
@@ -463,21 +488,17 @@ void __ISR(_TIMER_2_VECTOR, ipl5) Timer2Handler(void) {
 #define NOTE_OFF 0x80
 
 void ProcessIO(void) {
-    static BYTE pitch = 0x3C;
+    // static BYTE pitch = 0x3C;
     short potValue = 0;
     static short previousPotValue = 0;
     static unsigned char sentNoteOff = TRUE;
     static unsigned char LEDflag = TRUE;
     unsigned char MIDIreceivedCommand;
-    static unsigned short USBtimeout = 0;
-    unsigned char RXcommandServoNumber;
-    unsigned char TXcommandServoNumber = 1;
+    unsigned char RxServoNumber;    
     static unsigned short LEDcounter = 0;
-
-    if (HOSTRxBufferFull) {
-        printf("\rRECEIVED: %s", HOSTRxBuffer);
-        HOSTRxBufferFull = FALSE;
-    }
+    static unsigned char lowOut = 0, highOut = 0;
+    static unsigned char lowIn = 0, highIn = 0;
+    unsigned char inValue;
 
     //Blink the LEDs according to the USB device status
     BlinkUSBStatus();
@@ -500,16 +521,20 @@ void ProcessIO(void) {
                 LATBbits.LATB2 = 0;
             }
         }
-        USBtimeout = 30;
-        MIDIreceivedCommand = ReceivedDataBuffer[1] & 0xF0;
 
-        if (MIDIreceivedCommand == 0x90 && ReceivedDataBuffer[3] != 0) {
-            RXcommandServoNumber = (ReceivedDataBuffer[3] - 1) & 0x0F;           
-            printf("\r%d> %X, %X, %X, %X", RXcommandServoNumber, ReceivedDataBuffer[0], ReceivedDataBuffer[1], ReceivedDataBuffer[2], ReceivedDataBuffer[3]);
+        MIDIreceivedCommand = ReceivedDataBuffer[1] & 0xF0;
+        RxServoNumber = (ReceivedDataBuffer[1] & 0x0F);
+        
+        highIn = ReceivedDataBuffer[2];
+        lowIn = ReceivedDataBuffer[3] & 0x01;            
+        inValue = ((highIn << 1) & 0xFE) | lowIn;
+        if (inValue > 254) inValue--;
+
+        if (MIDIreceivedCommand == 0x90 && ReceivedDataBuffer[3]) {
+            if (displayMode) printf("\rCH%d: %X", RxServoNumber, inValue);
             if (XBEETxLength == 0) {
-                XBEETxBuffer[0] = RXcommandServoNumber;
-                XBEETxBuffer[1] = ReceivedDataBuffer[2] * 2;
-                if (XBEETxBuffer[1] == 0xFF) XBEETxBuffer[1] = 254;
+                XBEETxBuffer[0] = RxServoNumber;                
+                XBEETxBuffer[1] = inValue; 
                 XBEETxLength = 2;
                 while (!UARTTransmitterIsReady(XBEEuart));
                 UARTSendDataByte(XBEEuart, 0xFF);
@@ -523,16 +548,16 @@ void ProcessIO(void) {
             midiData.Val = 0; // must set all unused values to 0 
             midiData.CableNumber = 0;
             midiData.CodeIndexNumber = MIDI_CIN_NOTE_OFF;
-            midiData.DATA_0 = 0x80; //Note off
-            midiData.DATA_1 = pitch; //pitch
-            midiData.DATA_2 = 0x00;
+            midiData.DATA_0 = 0x80 | servoNumber; //Note off
+            // midiData.DATA_1 = pitch; //pitch
+            midiData.DATA_1 = highOut; //pitch
+            
+            midiData.DATA_2 = 0x60 | (lowOut + 1);
+            if (midiData.DATA_2 > 127) midiData.DATA_2 = 0x61;                        
+            
             USBTxHandle = USBTxOnePacket(MIDI_EP, (BYTE*) & midiData, 4);
             sentNoteOff = TRUE;
-        } else {
-            if (USBtimeout) {
-                USBtimeout--;
-                if (!USBtimeout) mLED_4_Off();
-            }
+        } else {            
             potValue = ADresult[0] / 4;
             ConfigAd();
             if (potValue > 254) potValue = 254;
@@ -543,23 +568,25 @@ void ProcessIO(void) {
                     midiData.Val = 0; //must set all unused values to 0
                     midiData.CableNumber = 0;
                     midiData.CodeIndexNumber = MIDI_CIN_NOTE_ON;
-                    midiData.DATA_0 = 0x90; //Note on
-                    pitch = (BYTE) (potValue / 2);
-                    if (pitch > 127) pitch = 127;
-                    midiData.DATA_1 = pitch; //pitch
-                    midiData.DATA_2 = 0x40 | (TXcommandServoNumber + 1);
+                    midiData.DATA_0 = 0x90 | servoNumber; //Note on
+                    lowOut = potValue & 0x01;
+                    highOut = (potValue >> 1) & 0x7F;
+                    midiData.DATA_1 = highOut;
+                    midiData.DATA_2 = 0x60 | (lowOut + 1);
+                    if (midiData.DATA_2 > 127) midiData.DATA_2 = 0x61;
                     USBTxHandle = USBTxOnePacket(MIDI_EP, (BYTE*) & midiData, 4);
                     sentNoteOff = FALSE;
-                } else if (!runMode && XBEETxLength == 0) {
-                    XBEETxBuffer[0] = 0;
+                }                 
+                else if (!runMode && XBEETxLength == 0) {
+                    XBEETxBuffer[0] = servoNumber;
                     XBEETxBuffer[1] = (unsigned char) potValue;
                     XBEETxLength = 2;
                     while (!UARTTransmitterIsReady(XBEEuart));
                     UARTSendDataByte(XBEEuart, 0xFF); // Send SSC Servo start character
                     INTEnable(INT_SOURCE_UART_TX(XBEEuart), INT_ENABLED);
-                    printf("\r%d", potValue);
-                }
-            } else mLED_2_Off();
+                    if (displayMode) printf("\r%d", potValue);
+                }                
+            } else mLED_2_Off();             
         } // end else
     } // end if (frameFlag)
 }//end ProcessIO
@@ -567,7 +594,7 @@ void ProcessIO(void) {
 void __ISR(XBEE_VECTOR, ipl2) IntXbeeHandler(void) {
     static unsigned short RxIndex = 0;
     static unsigned short TxIndex = 0;
-    unsigned char ch = '\r';
+    unsigned char ch;
 
     if (XBEEbits.OERR || XBEEbits.FERR) {
         if (UARTReceivedDataIsAvailable(XBEEuart))
@@ -584,16 +611,6 @@ void __ISR(XBEE_VECTOR, ipl2) IntXbeeHandler(void) {
                 XBEERxLength = RxIndex;
                 RxIndex = 0;
             }
-            /*/
-                        if (!UARTtimeout){
-                            CloseTimer1();
-                            ConfigIntTimer1(T1_INT_ON | T1_INT_PRIOR_2);
-                            OpenTimer1(T1_ON | T1_SOURCE_INT | T1_PS_1_256, 18724);  // $$$$
-                        }
-                        OEpin = 1;           // Keep output enable high so display is off
-                        UARTtimeout=UART_TIMEOUT;
-                    }
-             */
         }
     }
 
@@ -611,6 +628,76 @@ void __ISR(XBEE_VECTOR, ipl2) IntXbeeHandler(void) {
         } else INTEnable(INT_SOURCE_UART_TX(XBEEuart), INT_DISABLED);
     }
 
+}
+#define ENTER 13
+#define BACKSPACE 8
+// HOST UART interrupt handler it is set at priority level 2
+
+void __ISR(HOST_VECTOR, ipl2) IntHostUartHandler(void) {
+    unsigned char ch;
+    static unsigned short HOSTRxIndex = 0;
+
+    if (HOSTbits.OERR || HOSTbits.FERR) {
+        if (UARTReceivedDataIsAvailable(HOSTuart))
+            ch = UARTGetDataByte(HOSTuart);
+        HOSTbits.OERR = 0;
+        HOSTRxIndex = 0;
+    } else if (INTGetFlag(INT_SOURCE_UART_RX(HOSTuart))) {
+        INTClearFlag(INT_SOURCE_UART_RX(HOSTuart));
+        if (UARTReceivedDataIsAvailable(HOSTuart)) {
+            ch = toupper(UARTGetDataByte(HOSTuart));
+            if (ch == '\n' || ch == 0);
+            else if (ch == BACKSPACE) {
+                while (!UARTTransmitterIsReady(HOSTuart));
+                UARTSendDataByte(HOSTuart, ' ');
+                while (!UARTTransmitterIsReady(HOSTuart));
+                UARTSendDataByte(HOSTuart, BACKSPACE);
+                if (HOSTRxIndex > 0) HOSTRxIndex--;
+            } else if (ch == ENTER) {
+                HOSTRxBuffer[HOSTRxIndex] = '\0'; // $$$$
+                HOSTRxBufferFull = TRUE;
+                HOSTRxIndex = 0;
+            }
+            else if (ch < 27) controlCommand = ch;
+            else if (HOSTRxIndex < MAXBUFFER) HOSTRxBuffer[HOSTRxIndex++] = ch;
+        }
+    }
+    if (INTGetFlag(INT_SOURCE_UART_TX(HOSTuart))) {
+        INTClearFlag(INT_SOURCE_UART_TX(HOSTuart));
+    }
+}
+
+#define MAXNUMLENGTH 8
+
+short getInteger(unsigned char *ptrString) {
+    unsigned char ch = 0, strNumber[MAXNUMLENGTH + 1];
+    unsigned char negativeFlag = FALSE;
+    short i = 0, j = 0, value = 32767;
+
+    while (ptrString[i] != NULL && j < MAXNUMLENGTH) {
+        ch = ptrString[i];
+        if (ch == '\0') {
+            strNumber[j] = '\0';
+            break;
+        }
+        if (ch == '-') negativeFlag = TRUE;
+        else if (isdigit(ch)) strNumber[j++] = ch;
+        i++;
+    }
+    if (j) value = atoi(strNumber);
+    if (negativeFlag) value = 0 - value;
+    return (value);
+}
+
+unsigned char getCommand(unsigned char *ptrString) {
+    unsigned char ch = 0;
+    short i = 0;
+
+    while (ptrString[i] != NULL && i < MAXBUFFER) {
+        ch = ptrString[i];
+        if (isalpha(ch)) return (ch);
+    }
+    return (0);
 }
 
 /** EOF main.c *************************************************/
