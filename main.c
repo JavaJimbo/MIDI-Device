@@ -6,7 +6,8 @@
  * 6-1-17:      Fixed NOTE OFF bug. Works well at 16 ms sampling rate with servo 0.
  * 6-1-17:      Assigns channel numbers to servos. Implemented HOST keyboard menu to enable/disable servos.
  * 6-2-17:      Added low pass and window filtering.
- * 6-4-17:      Implemented STANDBY, PLAY, and RECORD for both USB and MIDI modes.
+ * 6-4-17:      Got rid of bugs that were causing servos to jerk.
+ *              Implemented STANDBY, PLAY, and RECORD for both USB and MIDI modes.
  ************************************************************************************************************/
 
 #ifndef MAIN_C
