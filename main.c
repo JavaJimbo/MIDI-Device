@@ -13,6 +13,7 @@
  *              Resolution is eight bits.
  * 6-6-17:      Records and plays 10 bit MIDI USB.
  *              Also got MIDI MODE working with 10 bit RECORD and PLAY
+ * 6-7-17:      Encoder interrupts work.
  ************************************************************************************************************/
 
 #ifndef MAIN_C
@@ -167,16 +168,15 @@ unsigned char convertDATAtoMIDI(unsigned char servoNumber, unsigned short intTen
 unsigned char convertDATAtoPOLU(unsigned char servoNumber, unsigned short tenBitValue, unsigned char *arrPOLUdata);
 short MIDItimeout = 0;
 unsigned char MIDIbufferFull = false;
+short EncoderCounter = 0;
 
 #define MIDI_TIMEOUT 2
+unsigned short encoderReg = 0x0000;
 
 int main(void) {
     short value = 0;
-    unsigned char command = 0;
-    short dummy = 0, filter = 0;
     short i = 0;
-    unsigned char ch;
-    unsigned short displayCounter = 0;
+    short previousEncoderCounter = 0;
 
     for (i = 0; i < MAXSERVO; i++) {
         arrServo[i].position = 127;
@@ -190,14 +190,11 @@ int main(void) {
     mLED_4_Off();
 
 #ifdef USE_USB
-    printf("\r\rTESTING USB MIDI - STANDBY MODE");
+    printf("\r\rTESTING TIMER ONE COUNTER");
 #else
     printf("\r\rTESTING MIDI IO:");
 #endif
-
-
     while (1) {
-
         if (controlCommand) {
             // printf("\rCONTROL: %d", controlCommand);
             switch (controlCommand) {
@@ -215,24 +212,18 @@ int main(void) {
                         printf("\rDISPLAY ON");
                     }
                     break;
-
                 case SET_RECORD:
                     mode = RECORD;
                     printf("\rRECORD MODE");
                     break;
-
                 case SET_STANDBY:
                     mode = STANDBY;
                     printf("\rSTANDBY MODE");
                     break;
-
                 case SET_PLAY:
                     mode = PLAY;
                     printf("\rPLAY MODE");
                     break;
-
-
-
                 default:
                     break;
             }
@@ -258,10 +249,14 @@ int main(void) {
         // Check bus status and service USB interrupts.
         USBDeviceTasks();
 #endif
-
         // Application-specific tasks.
         // Application related code may be added here, or in the ProcessUSB() function.
-        ProcessUSB();
+        // ProcessUSB();
+        if (previousEncoderCounter != EncoderCounter){
+            previousEncoderCounter = EncoderCounter;
+            printf("\rENCODER: %X = %d", encoderReg, EncoderCounter);
+        }
+            
 #else
         ProcessMIDI();
 #endif        
@@ -304,11 +299,6 @@ void BlinkUSBStatus(void) {
     if (USBSuspendControl == 1) {
         if (led_count == 0) {
             mLED_1_Toggle();
-            //if (mGetLED_1()) {
-            //    mLED_2_On();
-            //} else {
-            //    mLED_2_Off();
-            //}
         }//end if
     } else {
         if (USBDeviceState == DETACHED_STATE) {
@@ -327,11 +317,6 @@ void BlinkUSBStatus(void) {
         } else if (USBDeviceState == CONFIGURED_STATE) {
             if (led_count == 0) {
                 mLED_1_Toggle();
-                //if (mGetLED_1()) {
-                //    mLED_2_Off();
-                //} else {
-                //    mLED_2_On();
-                //}
             }//end if
         }//end if(...)
     }//end if(UCONbits.SUSPND...)
@@ -504,6 +489,12 @@ void UserInit(void) {
 
     //Initialize all of the push buttons
     mInitAllSwitches();
+    
+    
+    PORTSetPinsDigitalIn(IOPORT_C, BIT_14 | BIT_13);
+    mCNOpen(CN_ON, CN0_ENABLE | CN1_ENABLE, CN0_PULLUP_ENABLE | CN1_PULLUP_ENABLE);
+    ConfigIntCN(CHANGE_INT_ON | CHANGE_INT_PRI_2);        
+    
 
     //initialize the variable holding the handle for the last
     // transmission
@@ -554,9 +545,19 @@ void UserInit(void) {
 
     // Set up Timer 2 for 100 microsecond roll-over rate
     OpenTimer2(T2_ON | T2_SOURCE_INT | T2_PS_1_64, 1250);
-
     // set up the core timer interrupt with a priority of 5 and zero sub-priority
     ConfigIntTimer2(T2_INT_ON | T2_INT_PRIOR_5);
+    
+    /*
+    // Set up timers as a counter
+    T1CON = 0x00;
+    T1CONbits.TCS = 1; // Use external counter as input source (motor encoder)
+    T1CONbits.TCKPS1 = 0; // 1:1 Prescaler
+    T1CONbits.TCKPS0 = 0;
+    T1CONbits.TSYNC = 1;
+    PR1 = 0xFFFF;
+    T1CONbits.TON = 1; // Let her rip     
+    */
 
     PORTSetPinsDigitalOut(IOPORT_B, BIT_2);
 
@@ -1098,7 +1099,29 @@ void ProcessMIDI(void) {
     }// end if (frameFlag)
 } // end ProcessMIDI()
 
+void __ISR(_CHANGE_NOTICE_VECTOR, ipl2) ChangeNotice_Handler(void) {
+unsigned short PORTin;
+static unsigned short previousPORTin = 0x0000;
 
+
+    // Step #1 - always clear the mismatch condition first
+    PORTin = PORTC & 0x6000;
+    
+    // Step #2 - then clear the interrupt flag
+    mCNClearIntFlag();      
+    
+    if ((previousPORTin == 0x0000) && (PORTin == 0x4000))
+        EncoderCounter++;
+    else if ((previousPORTin == 0x4000) && (PORTin == 0x6000))
+        EncoderCounter++;
+    else if ((previousPORTin == 0x6000) && (PORTin == 0x2000))
+        EncoderCounter++;
+    else if ((previousPORTin == 0x2000) && (PORTin == 0x0000))
+        EncoderCounter++;
+    else EncoderCounter--;
+    
+    encoderReg = previousPORTin = PORTin;
+}
 
 /** EOF main.c *************************************************/
 #endif
