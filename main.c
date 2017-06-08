@@ -14,11 +14,14 @@
  * 6-6-17:      Records and plays 10 bit MIDI USB.
  *              Also got MIDI MODE working with 10 bit RECORD and PLAY
  * 6-7-17:      Encoder interrupts work.
+ * 6-8-17:      Added scaling multiplier for encoder input
  ************************************************************************************************************/
 
 #ifndef MAIN_C
 #define MAIN_C
 
+#define MAXSCALE 100
+#define MAXPOTVALUE 1023
 #define FRAME_DELAY 8
 #define MAXFILTER 8
 #define MAXWINDOW 5
@@ -150,6 +153,7 @@ short lowPassFilter(short newValue);
 #define SET_SERVO 19 // CTL-S
 #define SET_RECORD 18 // CTL-R
 #define SET_STANDBY 1 // CTL-A
+#define SET_SCALE 3 // CTL-C
 #define SET_PLAY 16 // CTL-P
 #define NUMBER_ERROR 32767
 
@@ -168,15 +172,18 @@ unsigned char convertDATAtoMIDI(unsigned char servoNumber, unsigned short intTen
 unsigned char convertDATAtoPOLU(unsigned char servoNumber, unsigned short tenBitValue, unsigned char *arrPOLUdata);
 short MIDItimeout = 0;
 unsigned char MIDIbufferFull = false;
-short EncoderCounter = 0;
+short EncoderCounter = 32;
 
 #define MIDI_TIMEOUT 2
-unsigned short encoderReg = 0x0000;
+short scaleValue = 16;
 
 int main(void) {
     short value = 0;
     short i = 0;
-    short previousEncoderCounter = 0;
+    unsigned char setCommand = 0;
+    
+    
+    
 
     for (i = 0; i < MAXSERVO; i++) {
         arrServo[i].position = 127;
@@ -190,18 +197,20 @@ int main(void) {
     mLED_4_Off();
 
 #ifdef USE_USB
-    printf("\r\rTESTING TIMER ONE COUNTER");
+    printf("\r\rTESTING ENCODER POT CONTROL");
 #else
     printf("\r\rTESTING MIDI IO:");
 #endif
     while (1) {
         if (controlCommand) {
-            // printf("\rCONTROL: %d", controlCommand);
             switch (controlCommand) {
                 case SET_SERVO:
-                    // displayMode = false;
                     mode = STANDBY;
-                    printf("\rSET SERVO");
+                    printf("\rSET SERVO: %d", servoNumber);
+                    break;
+                case SET_SCALE:
+                    mode = STANDBY;
+                    printf("\rSET POT SCALE: %d", scaleValue);
                     break;
                 case SET_DISPLAY:
                     if (displayMode) {
@@ -227,16 +236,26 @@ int main(void) {
                 default:
                     break;
             }
+            setCommand = controlCommand;
             controlCommand = 0;
         } else if (HOSTRxBufferFull) {
             HOSTRxBufferFull = false;
-
             value = getInteger(HOSTRxBuffer);
-            if (value == NUMBER_ERROR) printf("\rNo number entered");
-            else if (value < 1 || value > MAXSERVO) printf("\rInvalid Servo");
-            else {
-                servoNumber = (unsigned char) value;
-                printf("\rUSE SERVO #%d", servoNumber);
+            if (setCommand == SET_SERVO) {
+                if (value == NUMBER_ERROR) printf("\rNo number entered");
+                else if (value < 1 || value > MAXSERVO) printf("\rInvalid Servo");
+                else {
+                    servoNumber = (unsigned char) value;
+                    printf("\rUSE SERVO #%d", servoNumber);
+                }
+            }
+            else if (setCommand == SET_SCALE) {
+                if (value == NUMBER_ERROR) printf("\rNo number entered");
+                else if (value < 1 || value > MAXSCALE) printf("\rUse value from 1 to %d", MAXSCALE);
+                else {
+                    scaleValue = (short) value;
+                    printf("\rPOT SCALE x%d", scaleValue);
+                }
             }
         }
 
@@ -251,12 +270,9 @@ int main(void) {
 #endif
         // Application-specific tasks.
         // Application related code may be added here, or in the ProcessUSB() function.
-        // ProcessUSB();
-        if (previousEncoderCounter != EncoderCounter){
-            previousEncoderCounter = EncoderCounter;
-            printf("\rENCODER: %X = %d", encoderReg, EncoderCounter);
-        }
-            
+        ProcessUSB();
+
+
 #else
         ProcessMIDI();
 #endif        
@@ -489,12 +505,12 @@ void UserInit(void) {
 
     //Initialize all of the push buttons
     mInitAllSwitches();
-    
-    
+
+
     PORTSetPinsDigitalIn(IOPORT_C, BIT_14 | BIT_13);
     mCNOpen(CN_ON, CN0_ENABLE | CN1_ENABLE, CN0_PULLUP_ENABLE | CN1_PULLUP_ENABLE);
-    ConfigIntCN(CHANGE_INT_ON | CHANGE_INT_PRI_2);        
-    
+    ConfigIntCN(CHANGE_INT_ON | CHANGE_INT_PRI_2);
+
 
     //initialize the variable holding the handle for the last
     // transmission
@@ -541,13 +557,13 @@ void UserInit(void) {
     INTSetVectorPriority(INT_VECTOR_UART(MIDIuart), INT_PRIORITY_LEVEL_2);
     INTSetVectorSubPriority(INT_VECTOR_UART(MIDIuart), INT_SUB_PRIORITY_LEVEL_0);
 
-    ConfigAd();
+    // ConfigAd();
 
     // Set up Timer 2 for 100 microsecond roll-over rate
     OpenTimer2(T2_ON | T2_SOURCE_INT | T2_PS_1_64, 1250);
     // set up the core timer interrupt with a priority of 5 and zero sub-priority
     ConfigIntTimer2(T2_INT_ON | T2_INT_PRIOR_5);
-    
+
     /*
     // Set up timers as a counter
     T1CON = 0x00;
@@ -557,7 +573,7 @@ void UserInit(void) {
     T1CONbits.TSYNC = 1;
     PR1 = 0xFFFF;
     T1CONbits.TON = 1; // Let her rip     
-    */
+     */
 
     PORTSetPinsDigitalOut(IOPORT_B, BIT_2);
 
@@ -850,7 +866,6 @@ unsigned char convertDATAtoMIDI(unsigned char servoNumber, unsigned short intTen
     return (true);
 }
 
-
 unsigned char convertMIDItoData(unsigned char *arrMIDIdata, unsigned short *servoData, unsigned char *servoNumber) {
     unsigned char arrMIDI0, arrMIDI1, arrMIDI2, arrMIDI3;
 
@@ -926,7 +941,8 @@ void ProcessUSB(void) {
     static unsigned char arrMIDIdata[8];
     unsigned short servoData = 0;
     unsigned char ReceivedServoNumber;
-
+    long lngPotValue;
+    static unsigned short previousEncoderCounter = 0;
 
     //Blink the LEDs according to the USB device status
     BlinkUSBStatus();
@@ -952,7 +968,7 @@ void ProcessUSB(void) {
 
         if (mode != STANDBY && XBEETxLength == 0) {
             if (convertMIDItoData(ReceivedDataBuffer, &servoData, &ReceivedServoNumber)) {
-                if (displayMode) printf("\rCH%d POT: %d => MIDI: %d", ReceivedServoNumber, potValue, servoData);                
+                if (displayMode) printf("\rCH%d POT: %d => MIDI: %d", ReceivedServoNumber, potValue, servoData);
 
                 convertDATAtoPOLU(ReceivedServoNumber, servoData, arrPOLUdata);
 
@@ -976,13 +992,21 @@ void ProcessUSB(void) {
             USBTxHandle = USBTxOnePacket(MIDI_EP, arrMIDIdata, 4);
             sentNoteOff = true;
         } else {
-            short rawValue = (short) (ADresult[0]);
-            short windowValue = windowFilter(rawValue);
-            potValue = lowPassFilter(windowValue);
+            // short rawValue = (short) (ADresult[0]);
+            // short windowValue = windowFilter(rawValue);
+            // potValue = lowPassFilter(windowValue);
+            // potValue = rawValue;
+            // if (potValue > 1023) potValue = 1023;
 
-            potValue = rawValue;
-            if (potValue > 1023) potValue = 1023;
-            ConfigAd();
+            if (previousEncoderCounter != EncoderCounter) {
+                previousEncoderCounter = EncoderCounter;
+                lngPotValue = (long) (EncoderCounter * scaleValue);
+                if (lngPotValue >= MAXPOTVALUE) lngPotValue = MAXPOTVALUE;
+                else if (lngPotValue < 0) lngPotValue = 0;
+                potValue = (short) lngPotValue;
+            }
+
+            // ConfigAd();
 
             if (abs(previousPotValue - potValue) > 4) {
                 previousPotValue = potValue;
@@ -1002,7 +1026,7 @@ void ProcessUSB(void) {
                     XBEETxBuffer[2] = arrPOLUdata[3];
                     XBEETxLength = 3;
 
-                    INTEnable(INT_SOURCE_UART_TX(XBEEuart), INT_ENABLED);                    
+                    INTEnable(INT_SOURCE_UART_TX(XBEEuart), INT_ENABLED);
                     if (displayMode) printf("\r#%d %d", servoNumber, potValue);
                 }
             } else mLED_2_Off();
@@ -1026,6 +1050,8 @@ void ProcessMIDI(void) {
     static unsigned char arrMIDIdata[8];
     unsigned short servoData = 0;
     unsigned char ReceivedServoNumber;
+
+
 
     if (MIDIbufferFull) {
         MIDIbufferFull = false;
@@ -1100,16 +1126,16 @@ void ProcessMIDI(void) {
 } // end ProcessMIDI()
 
 void __ISR(_CHANGE_NOTICE_VECTOR, ipl2) ChangeNotice_Handler(void) {
-unsigned short PORTin;
-static unsigned short previousPORTin = 0x0000;
+    unsigned short PORTin;
+    static unsigned short previousPORTin = 0x0000;
 
 
     // Step #1 - always clear the mismatch condition first
     PORTin = PORTC & 0x6000;
-    
+
     // Step #2 - then clear the interrupt flag
-    mCNClearIntFlag();      
-    
+    mCNClearIntFlag();
+
     if ((previousPORTin == 0x0000) && (PORTin == 0x4000))
         EncoderCounter++;
     else if ((previousPORTin == 0x4000) && (PORTin == 0x6000))
@@ -1119,8 +1145,12 @@ static unsigned short previousPORTin = 0x0000;
     else if ((previousPORTin == 0x2000) && (PORTin == 0x0000))
         EncoderCounter++;
     else EncoderCounter--;
-    
-    encoderReg = previousPORTin = PORTin;
+
+    previousPORTin = PORTin;
+
+    if (EncoderCounter > MAXPOTVALUE) EncoderCounter = MAXPOTVALUE;
+    else if (EncoderCounter < 0) EncoderCounter = 0;
+
 }
 
 /** EOF main.c *************************************************/
