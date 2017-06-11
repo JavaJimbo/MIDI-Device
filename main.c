@@ -15,16 +15,22 @@
  *              Also got MIDI MODE working with 10 bit RECORD and PLAY
  * 6-7-17:      Encoder interrupts work.
  * 6-8-17:      Added scaling multiplier for encoder input
+ * 6-10-17:     Changed servo resolution to 8 bits. Combined servo number with servo data.
+ *              Allow seven servos. Use Pololu 6 bit command and data protocol.
+ *              Board number is channel number.
  ************************************************************************************************************/
 
 #ifndef MAIN_C
 #define MAIN_C
 
-#define MAXSCALE 100
-#define MAXPOTVALUE 1023
+#define MAXSCALE 24
+#define MAXPOTVALUE 255
 #define FRAME_DELAY 8
 #define MAXFILTER 8
 #define MAXWINDOW 5
+#define MAXSERVO 7 // 12
+#define MAXPOTS 1
+#define MAXBOARD 16
 
 #define true TRUE
 #define false FALSE
@@ -124,8 +130,7 @@ unsigned char MIDITxBuffer[MAXBUFFER];
 unsigned char MIDIRxBuffer[MAXBUFFER];
 unsigned short MIDIRxIndex = 0;
 
-#define MAXSERVO 12
-#define MAXPOTS 1
+
 unsigned short ADresult[MAXPOTS]; // read the result of channel 0 conversion from the idle buffer
 
 void ConfigAd(void);
@@ -133,13 +138,7 @@ void ConfigAd(void);
 unsigned char frameFlag = false;
 unsigned short milliSecondCounter = 0;
 
-#define STANDBY 0
-#define PLAY 1
-#define RECORD 2
 
-unsigned char mode = STANDBY;
-unsigned char displayMode = true;
-short servoNumber = 1;
 
 unsigned char controlCommand = 0;
 short getInteger(unsigned char *ptrString);
@@ -167,23 +166,32 @@ struct servoType {
 struct servoType arrServo[MAXBUFFER];
 unsigned short servoDataIndex = 0;
 unsigned short MIDIStateMachine(void);
-unsigned char convertMIDItoData(unsigned char *arrMIDIdata, unsigned short *servoData, unsigned char *servoNumber);
-unsigned char convertDATAtoMIDI(unsigned char servoNumber, unsigned short intTenBit, unsigned char *arrMIDIdata);
-unsigned char convertDATAtoPOLU(unsigned char servoNumber, unsigned short tenBitValue, unsigned char *arrPOLUdata);
+//unsigned char convertMIDItoData(unsigned char *arrMIDIdata, unsigned short *servoData, unsigned char *servoNumber);
+//unsigned char convertDATAtoMIDI(unsigned char servoNumber, unsigned short intTenBit, unsigned char *arrMIDIdata);
+// unsigned char convertDATAtoPOLU(unsigned char servoNumber, unsigned short tenBitValue, unsigned char *arrPOLUdata);
+unsigned char convertDATAtoPOLU(unsigned char boardNumber, unsigned char servoNumber, unsigned short tenBitValue, unsigned char *arrPOLUdata);
+unsigned char convertDATAtoMIDI(unsigned char boardNumber, unsigned char servoNumber, unsigned short intTenBit, unsigned char *arrMIDIdata);
+unsigned char convertMIDItoData(unsigned char *boardNumber, unsigned char *arrMIDIdata, unsigned short *servoData, unsigned char *servoNumber);
 short MIDItimeout = 0;
 unsigned char MIDIbufferFull = false;
 short EncoderCounter = 32;
 
 #define MIDI_TIMEOUT 2
-short scaleValue = 16;
+short scaleValue = 4; // was 16
+
+#define STANDBY 0
+#define PLAY 1
+#define RECORD 2
+
+unsigned char mode = STANDBY;
+unsigned char displayMode = true;
+short servoNumber = 0;
+unsigned char boardNumber = 12;
 
 int main(void) {
     short value = 0;
     short i = 0;
     unsigned char setCommand = 0;
-    
-    
-    
 
     for (i = 0; i < MAXSERVO; i++) {
         arrServo[i].position = 127;
@@ -243,13 +251,12 @@ int main(void) {
             value = getInteger(HOSTRxBuffer);
             if (setCommand == SET_SERVO) {
                 if (value == NUMBER_ERROR) printf("\rNo number entered");
-                else if (value < 1 || value > MAXSERVO) printf("\rInvalid Servo");
+                else if (value < 0 || value > MAXSERVO) printf("\rInvalid Servo");
                 else {
                     servoNumber = (unsigned char) value;
                     printf("\rUSE SERVO #%d", servoNumber);
                 }
-            }
-            else if (setCommand == SET_SCALE) {
+            } else if (setCommand == SET_SCALE) {
                 if (value == NUMBER_ERROR) printf("\rNo number entered");
                 else if (value < 1 || value > MAXSCALE) printf("\rUse value from 1 to %d", MAXSCALE);
                 else {
@@ -814,77 +821,6 @@ void __ISR(MIDI_VECTOR, ipl2) IntMIDIHandler(void) {
 
 }
 
-
-
-
-#define SERVO_PULSE_OFFSET 375 
-
-unsigned char convertDATAtoPOLU(unsigned char servoNumber, unsigned short tenBitValue, unsigned char *arrPOLUdata) {
-    unsigned char POLUlow, POLUhigh;
-    unsigned long offsetValue;
-    unsigned long lngValue;
-
-    if (arrPOLUdata == NULL) return (false);
-    if (servoNumber == 255) return (false);
-
-    offsetValue = (unsigned long) (tenBitValue + SERVO_PULSE_OFFSET);
-
-    lngValue = (offsetValue * 64) / 5;
-    if (lngValue > 0xFFFF) lngValue = 0xFFFF;
-    convert.integer = (unsigned short) lngValue;
-
-    // convert.integer = (offsetValue * 64) / 5;
-    POLUhigh = convert.highByte; // to make high byte a multiple of 128 
-    POLUlow = (convert.lowByte >> 1) & 0b01111111; // Shift low byte down one to clear MSB
-
-    // Now assemble Pololu command string:
-    arrPOLUdata[0] = 0x84;
-    arrPOLUdata[1] = servoNumber - 1;
-    arrPOLUdata[2] = POLUlow;
-    arrPOLUdata[3] = POLUhigh;
-
-    return (true);
-}
-
-// To store 10 bit AD result as MIDI data:
-// xxxxxx98 76543210 => x9876543 210xxxxx
-
-unsigned char convertDATAtoMIDI(unsigned char servoNumber, unsigned short intTenBit, unsigned char *arrMIDIdata) {
-    unsigned char MIDIhigh, MIDIlow;
-
-    if (arrMIDIdata == NULL) return (false);
-
-    convert.integer = intTenBit << 4;
-    MIDIhigh = convert.highByte + 12; // Make sure MSB of both bytes is zero
-    MIDIlow = (convert.lowByte >> 1) | 0x01;
-
-    arrMIDIdata[0] = MIDI_CIN_NOTE_ON;
-    arrMIDIdata[1] = 0x90 | (servoNumber - 1);
-    arrMIDIdata[2] = MIDIhigh;
-    arrMIDIdata[3] = MIDIlow;
-
-    return (true);
-}
-
-unsigned char convertMIDItoData(unsigned char *arrMIDIdata, unsigned short *servoData, unsigned char *servoNumber) {
-    unsigned char arrMIDI0, arrMIDI1, arrMIDI2, arrMIDI3;
-
-    if ((arrMIDIdata[1] & 0xF0) != 0x90)
-        return (false);
-
-    arrMIDI0 = arrMIDIdata[0];
-    arrMIDI1 = arrMIDIdata[1];
-    arrMIDI2 = arrMIDIdata[2];
-    arrMIDI3 = arrMIDIdata[3];
-
-    *servoNumber = (arrMIDI1 & 0x0F) + 1;
-    convert.highByte = arrMIDI2;
-    convert.lowByte = arrMIDI3 << 1;
-
-    *servoData = convert.integer >> 4;
-    return (true);
-}
-
 unsigned short MIDIStateMachine(void) {
     unsigned char ch;
     static unsigned char MIDIcommand = 0x90;
@@ -904,7 +840,7 @@ unsigned short MIDIStateMachine(void) {
         switch (MIDIstate) {
             case 0:
                 MIDIcommand = ch & 0xF0;
-                MIDIchannel = (ch & 0x0F) + 1;
+                MIDIchannel = ch & 0x0F;
                 if (MIDIcommand == 0x90) MIDIstate = 1;
                 break;
             case 1:
@@ -913,7 +849,8 @@ unsigned short MIDIStateMachine(void) {
                 break;
             case 2:
                 if (ch != 0) {
-                    if (MIDIchannel < MAXSERVO) {
+#define MAXCHANNEL 15
+                    if (MIDIchannel <= MAXCHANNEL) {
                         convert.highByte = highIn;
                         convert.lowByte = ch << 1;
                         arrServo[servoDataIndex].ID = MIDIchannel;
@@ -937,7 +874,7 @@ void ProcessUSB(void) {
     static unsigned char sentNoteOff = true;
     static unsigned char LEDflag = true;
     static unsigned short LEDcounter = 0;
-    static unsigned char arrPOLUdata[4];
+    static unsigned char arrPOLUdata[8];
     static unsigned char arrMIDIdata[8];
     unsigned short servoData = 0;
     unsigned char ReceivedServoNumber;
@@ -967,17 +904,19 @@ void ProcessUSB(void) {
         }
 
         if (mode != STANDBY && XBEETxLength == 0) {
-            if (convertMIDItoData(ReceivedDataBuffer, &servoData, &ReceivedServoNumber)) {
+            if (convertMIDItoData(&boardNumber, ReceivedDataBuffer, &servoData, &ReceivedServoNumber)) {
                 if (displayMode) printf("\rCH%d POT: %d => MIDI: %d", ReceivedServoNumber, potValue, servoData);
 
-                convertDATAtoPOLU(ReceivedServoNumber, servoData, arrPOLUdata);
+                convertDATAtoPOLU(boardNumber, ReceivedServoNumber, servoData, arrPOLUdata);
 
                 while (!UARTTransmitterIsReady(XBEEuart));
                 UARTSendDataByte(XBEEuart, arrPOLUdata[0]); // Send SSC Servo start character                
                 XBEETxBuffer[0] = arrPOLUdata[1];
                 XBEETxBuffer[1] = arrPOLUdata[2];
                 XBEETxBuffer[2] = arrPOLUdata[3];
-                XBEETxLength = 3;
+                XBEETxBuffer[3] = arrPOLUdata[4];
+                XBEETxBuffer[4] = arrPOLUdata[5];
+                XBEETxLength = 5;
 
                 INTEnable(INT_SOURCE_UART_TX(XBEEuart), INT_ENABLED);
             }
@@ -1008,23 +947,25 @@ void ProcessUSB(void) {
 
             // ConfigAd();
 
-            if (abs(previousPotValue - potValue) > 4) {
+            // if (abs(previousPotValue - potValue) > 0) {
+            if (previousPotValue != potValue) {
                 previousPotValue = potValue;
                 mLED_2_On();
                 if (mode == RECORD && !USBHandleBusy(USBTxHandle)) {
-                    convertDATAtoMIDI(servoNumber, (unsigned short) potValue, arrMIDIdata);
+                    convertDATAtoMIDI(boardNumber, servoNumber, (unsigned short) potValue, arrMIDIdata);
                     USBTxHandle = USBTxOnePacket(MIDI_EP, arrMIDIdata, 4);
                     sentNoteOff = false;
                 } else if (mode == STANDBY && XBEETxLength == 0) {
-                    convertDATAtoPOLU(servoNumber, (unsigned short) potValue, arrPOLUdata);
+                    convertDATAtoPOLU(boardNumber, servoNumber, (unsigned short) potValue, arrPOLUdata);
 
                     while (!UARTTransmitterIsReady(XBEEuart));
                     UARTSendDataByte(XBEEuart, arrPOLUdata[0]); // Send SSC Servo start character
-
                     XBEETxBuffer[0] = arrPOLUdata[1];
                     XBEETxBuffer[1] = arrPOLUdata[2];
                     XBEETxBuffer[2] = arrPOLUdata[3];
-                    XBEETxLength = 3;
+                    XBEETxBuffer[3] = arrPOLUdata[4];
+                    XBEETxBuffer[4] = arrPOLUdata[5];
+                    XBEETxLength = 5;
 
                     INTEnable(INT_SOURCE_UART_TX(XBEEuart), INT_ENABLED);
                     if (displayMode) printf("\r#%d %d", servoNumber, potValue);
@@ -1046,7 +987,7 @@ void ProcessMIDI(void) {
     static unsigned char sentNoteOff = true;
     static unsigned char velocity = 0;
 
-    static unsigned char arrPOLUdata[4];
+    static unsigned char arrPOLUdata[8];
     static unsigned char arrMIDIdata[8];
     unsigned short servoData = 0;
     unsigned char ReceivedServoNumber;
@@ -1062,13 +1003,16 @@ void ProcessMIDI(void) {
             if (mode != STANDBY && XBEETxLength == 0) {
                 if (displayMode) printf("\rCH%d POT: %d => MIDI: %d", arrServo[MIDIdataIndex].ID, potValue, arrServo[MIDIdataIndex].position);
 
-                convertDATAtoPOLU(arrServo[MIDIdataIndex].ID, arrServo[MIDIdataIndex].position, arrPOLUdata);
+                convertDATAtoPOLU(boardNumber, arrServo[MIDIdataIndex].ID, arrServo[MIDIdataIndex].position, arrPOLUdata);
                 while (!UARTTransmitterIsReady(XBEEuart));
-                UARTSendDataByte(XBEEuart, arrPOLUdata[0]); // Send SSC Servo start character                
+                UARTSendDataByte(XBEEuart, arrPOLUdata[0]); // Send SSC Servo start character        
                 XBEETxBuffer[0] = arrPOLUdata[1];
                 XBEETxBuffer[1] = arrPOLUdata[2];
                 XBEETxBuffer[2] = arrPOLUdata[3];
-                XBEETxLength = 3;
+                XBEETxBuffer[3] = arrPOLUdata[4];
+                XBEETxBuffer[4] = arrPOLUdata[5];
+                XBEETxLength = 5;
+
                 INTEnable(INT_SOURCE_UART_TX(XBEEuart), INT_ENABLED);
 
                 MIDIdataIndex++;
@@ -1082,7 +1026,8 @@ void ProcessMIDI(void) {
         if (MIDITxLength == 0) {
             if (sentNoteOff == false) {
                 while (!UARTTransmitterIsReady(MIDIuart));
-                UARTSendDataByte(MIDIuart, 0x80 | (servoNumber - 1));
+                // UARTSendDataByte(MIDIuart, 0x80 | (servoNumber - 1));
+                UARTSendDataByte(MIDIuart, 0x80 | servoNumber);
                 MIDITxLength = 2;
                 INTEnable(INT_SOURCE_UART_TX(MIDIuart), INT_ENABLED);
                 sentNoteOff = true;
@@ -1090,23 +1035,24 @@ void ProcessMIDI(void) {
                 short rawValue = (short) (ADresult[0]);
                 short windowValue = windowFilter(rawValue);
                 potValue = lowPassFilter(windowValue);
-                if (potValue > 1023) potValue = 1023;
+                if (potValue > MAXPOTVALUE) potValue = MAXPOTVALUE;
                 ConfigAd();
 
                 if (abs(previousPotValue - potValue) > 4) {
                     previousPotValue = potValue;
                     mLED_2_On();
                     if (mode == RECORD) {
-                        convertDATAtoMIDI(servoNumber, (unsigned short) potValue, arrMIDIdata);
+                        convertDATAtoMIDI(boardNumber, servoNumber, (unsigned short) potValue, arrMIDIdata);
                         MIDITxBuffer[0] = arrMIDIdata[2];
                         MIDITxBuffer[1] = arrMIDIdata[3];
                         MIDITxLength = 2;
                         while (!UARTTransmitterIsReady(MIDIuart));
-                        UARTSendDataByte(MIDIuart, 0x90 | (servoNumber - 1));
+                        // UARTSendDataByte(MIDIuart, 0x90 | (servoNumber - 1));
+                        UARTSendDataByte(MIDIuart, 0x90 | servoNumber);
                         INTEnable(INT_SOURCE_UART_TX(MIDIuart), INT_ENABLED);
                         sentNoteOff = false;
                     } else if (mode == STANDBY && XBEETxLength == 0) {
-                        convertDATAtoPOLU(servoNumber, (unsigned short) potValue, arrPOLUdata);
+                        convertDATAtoPOLU(boardNumber, servoNumber, (unsigned short) potValue, arrPOLUdata);
 
                         while (!UARTTransmitterIsReady(XBEEuart));
                         UARTSendDataByte(XBEEuart, arrPOLUdata[0]); // Send SSC Servo start character
@@ -1114,7 +1060,9 @@ void ProcessMIDI(void) {
                         XBEETxBuffer[0] = arrPOLUdata[1];
                         XBEETxBuffer[1] = arrPOLUdata[2];
                         XBEETxBuffer[2] = arrPOLUdata[3];
-                        XBEETxLength = 3;
+                        XBEETxBuffer[3] = arrPOLUdata[4];
+                        XBEETxBuffer[4] = arrPOLUdata[5];
+                        XBEETxLength = 5;
 
                         INTEnable(INT_SOURCE_UART_TX(XBEEuart), INT_ENABLED);
                         if (displayMode) printf("\r#%d %d", servoNumber, potValue);
@@ -1152,6 +1100,115 @@ void __ISR(_CHANGE_NOTICE_VECTOR, ipl2) ChangeNotice_Handler(void) {
     else if (EncoderCounter < 0) EncoderCounter = 0;
 
 }
+
+
+// To store 10 bit AD result as MIDI data:
+// xxxxxx98 76543210 => x9876543 210xxxxx
+
+unsigned char convertDATAtoMIDI(unsigned char boardNumber, unsigned char servoNumber, unsigned short intTenBit, unsigned char *arrMIDIdata) {
+    unsigned char MIDIhigh, MIDIlow;
+
+    if (arrMIDIdata == NULL) return (false);
+    if (servoNumber > MAXSERVO) return (false);
+
+    convert.integer = intTenBit << 2;
+    MIDIhigh = convert.highByte + 12; // Make sure MSB of both bytes is zero
+    MIDIlow = (convert.lowByte >> 1) | 0x01;
+
+    arrMIDIdata[0] = MIDI_CIN_NOTE_ON;
+    arrMIDIdata[1] = 0x90 | (boardNumber - 1);
+    arrMIDIdata[2] = MIDIhigh | (servoNumber << 4);
+    arrMIDIdata[3] = MIDIlow;
+
+    return (true);
+}
+
+unsigned char convertMIDItoData(unsigned char *boardNumber, unsigned char *arrMIDIdata, unsigned short *servoData, unsigned char *servoNumber) {
+    unsigned char arrMIDI0, arrMIDI1, arrMIDI2, arrMIDI3;
+
+    if ((arrMIDIdata[1] & 0xF0) != 0x90)
+        return (false);
+
+    arrMIDI0 = arrMIDIdata[0];
+    arrMIDI1 = arrMIDIdata[1];
+    *boardNumber = (arrMIDI1 & 0x0F) + 1;
+    arrMIDI2 = arrMIDIdata[2] & 0x0F;
+    *servoNumber = (arrMIDIdata[2] & 0xF0) >> 4;
+    arrMIDI3 = arrMIDIdata[3];
+
+    // *servoNumber = (arrMIDI1 & 0x0F) + 1;
+
+    convert.highByte = arrMIDI2;
+    convert.lowByte = arrMIDI3 << 1;
+
+    *servoData = convert.integer >> 2;
+    return (true);
+}
+
+/*
+#define SERVO_PULSE_OFFSET 93  // was 375
+unsigned char convertDATAtoPOLU(unsigned char boardNumber, unsigned char servoNumber, unsigned short tenBitValue, unsigned char *arrPOLUdata) {
+    unsigned char POLUlow, POLUhigh;
+    unsigned long offsetValue;
+    unsigned long lngValue;
+
+    if (arrPOLUdata == NULL) return (false);
+    if (servoNumber == 255) return (false);
+
+    offsetValue = (unsigned long) (tenBitValue + SERVO_PULSE_OFFSET);
+
+    // lngValue = (offsetValue * 64) / 5;
+    lngValue = (offsetValue * 256) / 5;
+    if (lngValue > 0xFFFF) lngValue = 0xFFFF;
+    convert.integer = (unsigned short) lngValue;
+
+    // convert.integer = (offsetValue * 64) / 5;
+    POLUhigh = convert.highByte; // to make high byte a multiple of 128 
+    POLUlow = (convert.lowByte >> 1) & 0b01111111; // Shift low byte down one to clear MSB
+
+    // Now assemble Pololu command string:
+    arrPOLUdata[0] = 0x84;
+    arrPOLUdata[1] = servoNumber - 1;
+    arrPOLUdata[2] = POLUlow;
+    arrPOLUdata[3] = POLUhigh;
+
+    return (true);
+}
+ */
+
+#define SERVO_PULSE_OFFSET 93  
+
+unsigned char convertDATAtoPOLU(unsigned char boardNumber, unsigned char servoNumber, unsigned short tenBitValue, unsigned char *arrPOLUdata) {
+    unsigned char POLUlow, POLUhigh;
+    unsigned long offsetValue;
+    unsigned long lngValue;
+
+    if (arrPOLUdata == NULL) return (false);
+    if (servoNumber == 255) return (false);
+    if (boardNumber > MAXBOARD) return (false);
+
+    offsetValue = (unsigned long) (tenBitValue + SERVO_PULSE_OFFSET);
+
+    // lngValue = (offsetValue * 64) / 5;
+    lngValue = (offsetValue * 256) / 5;
+    if (lngValue > 0xFFFF) lngValue = 0xFFFF;
+    convert.integer = (unsigned short) lngValue;
+
+    // convert.integer = (offsetValue * 64) / 5;
+    POLUhigh = convert.highByte; // to make high byte a multiple of 128 
+    POLUlow = (convert.lowByte >> 1) & 0b01111111; // Shift low byte down one to clear MSB
+
+    // Now assemble Pololu command string:
+    arrPOLUdata[0] = 0xAA; // Start character 0x84;
+    arrPOLUdata[1] = boardNumber;
+    arrPOLUdata[2] = 0x04; // Command
+    arrPOLUdata[3] = servoNumber;
+    arrPOLUdata[4] = POLUlow;
+    arrPOLUdata[5] = POLUhigh;
+
+    return (true);
+}
+
 
 /** EOF main.c *************************************************/
 #endif
