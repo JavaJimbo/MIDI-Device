@@ -19,6 +19,9 @@
  *              Allow seven servos. Use Pololu 6 bit command and data protocol.
  *              Board number is channel number.
  * 6-12-17:     DMX sending and receiving is working using LED Matrix Controller Board Rev 1
+ *              NOTE: MIDI cannot assign board number 0.
+ * 6-14-17:     Got Atmel memory working properly.
+ *              
  ************************************************************************************************************/
 
 #ifndef MAIN_C
@@ -55,12 +58,18 @@ union {
 #define highByte byte[1]  
 
 /** INCLUDES *******************************************************/
+#include <XC.h>
+
 #include "usb.h"
 #include "HardwareProfile.h"
 #include "usb_function_midi.h"
 #include "Delay.h"
+#include "AT45DB161.h"
 
-#include <XC.h>
+#include "GenericTypeDefs.h"
+#include "Compiler.h"
+
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -212,13 +221,55 @@ int main(void) {
     short displayCounter = 10;
     unsigned short DMXdataCounter = 0;
     unsigned char ch;
+    #define ATMEL_DATA_SIZE 16
+    unsigned char AtmelOutData[ATMEL_DATA_SIZE];
+    unsigned char AtmelInData[ATMEL_DATA_SIZE];
+    unsigned int bufferAddress = 0x0000;
+    unsigned short page = 0x0000;
+    unsigned char outTest[] = "Testing READ";
+    short outTestLength;
 
+    outTestLength = strlen(outTest);
+    
     for (i = 0; i < MAXSERVO; i++) {
         arrServo[i].position = 127;
         arrServo[i].updated = false;
     }
-
+        
     InitializeSystem();
+    
+    #define ATMEL_BUFFER 2
+    short pageNum = 1945;
+    short byteAddress = 100;
+        
+    DelayMs(100);
+    printf("\r\rNO WRITE: BUFFER #%d, START BYTE #%d, PAGE #%d", ATMEL_BUFFER, byteAddress, pageNum);
+    initAtmelSPI();
+    AtmelBusy(1);  
+   
+    #define PAGESIZE 528    
+    unsigned char AtmelRAM1[PAGESIZE];
+    unsigned char AtmelRAM2[PAGESIZE];      
+        
+    //printf("\rErasing FLASH");
+    //EraseFLASHpage(pageNum);
+    //printf("\rWriting to buffer");
+    //WriteAtmelBytes(ATMEL_BUFFER, outTest, byteAddress , outTestLength);
+    //printf("\rProgramming flash");
+    //ProgramFLASH (ATMEL_BUFFER, pageNum);
+    
+    
+    DelayMs(100);
+    printf("\rTransferring flash");
+    TransferFLASH(ATMEL_BUFFER, pageNum);
+    printf("\rReading buffer");
+    ReadAtmelBytes(ATMEL_BUFFER, AtmelRAM1, byteAddress, outTestLength);
+    
+    printf("\rATMEL RAM1: ");
+    for(i = 0; i < outTestLength; i++) printf("%c", AtmelRAM1[i]);
+    
+    while(1);    
+    
     mLED_1_Off();
     mLED_2_Off();
     mLED_3_Off();
@@ -1075,38 +1126,8 @@ unsigned char convertMIDItoData(unsigned char *boardNumber, unsigned char *arrMI
     return (true);
 }
 
-/*
-#define SERVO_PULSE_OFFSET 93  // was 375
-unsigned char convertDATAtoPOLU(unsigned char boardNumber, unsigned char servoNumber, unsigned short tenBitValue, unsigned char *arrPOLUdata) {
-    unsigned char POLUlow, POLUhigh;
-    unsigned long offsetValue;
-    unsigned long lngValue;
 
-    if (arrPOLUdata == NULL) return (false);
-    if (servoNumber == 255) return (false);
-
-    offsetValue = (unsigned long) (tenBitValue + SERVO_PULSE_OFFSET);
-
-    // lngValue = (offsetValue * 64) / 5;
-    lngValue = (offsetValue * 256) / 5;
-    if (lngValue > 0xFFFF) lngValue = 0xFFFF;
-    convert.integer = (unsigned short) lngValue;
-
-    // convert.integer = (offsetValue * 64) / 5;
-    POLUhigh = convert.highByte; // to make high byte a multiple of 128 
-    POLUlow = (convert.lowByte >> 1) & 0b01111111; // Shift low byte down one to clear MSB
-
-    // Now assemble Pololu command string:
-    arrPOLUdata[0] = 0x84;
-    arrPOLUdata[1] = servoNumber - 1;
-    arrPOLUdata[2] = POLUlow;
-    arrPOLUdata[3] = POLUhigh;
-
-    return (true);
-}
- */
-
-#define SERVO_PULSE_OFFSET 93  
+#define SERVO_PULSE_OFFSET 93  // Was 375
 
 unsigned char convertDATAtoPOLU(unsigned char boardNumber, unsigned char servoNumber, unsigned short tenBitValue, unsigned char *arrPOLUdata) {
     unsigned char POLUlow, POLUhigh;
@@ -1124,7 +1145,6 @@ unsigned char convertDATAtoPOLU(unsigned char boardNumber, unsigned char servoNu
     if (lngValue > 0xFFFF) lngValue = 0xFFFF;
     convert.integer = (unsigned short) lngValue;
 
-    // convert.integer = (offsetValue * 64) / 5;
     POLUhigh = convert.highByte; // to make high byte a multiple of 128 
     POLUlow = (convert.lowByte >> 1) & 0b01111111; // Shift low byte down one to clear MSB
 
@@ -1231,6 +1251,15 @@ void UserInit(void) {
     PORTSetPinsDigitalOut(IOPORT_B, BIT_2);
     PORTSetBits(IOPORT_B, BIT_2);
     
+    // Set up Port C outputs:
+    PORTSetPinsDigitalOut(IOPORT_C, BIT_3);
+    PORTSetBits(IOPORT_C, BIT_3);  
+    
+    // Set up Port E outputs:
+    PORTSetPinsDigitalOut(IOPORT_E, BIT_8);
+    PORTSetBits(IOPORT_E, BIT_8);    
+    
+    
     ConfigAd();
 
     // Set up Timer 2 for 100 microsecond roll-over rate
@@ -1246,6 +1275,7 @@ void UserInit(void) {
 
     // Turn on the interrupts
     INTEnableSystemMultiVectoredInt();
+    
 }//end UserInit
 
 
@@ -1355,4 +1385,3 @@ unsigned char 			ch, dummy;
 
 /** EOF main.c *************************************************/
 #endif
-
