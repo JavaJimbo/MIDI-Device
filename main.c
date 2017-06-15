@@ -21,6 +21,7 @@
  * 6-12-17:     DMX sending and receiving is working using LED Matrix Controller Board Rev 1
  *              NOTE: MIDI cannot assign board number 0.
  * 6-14-17:     Got Atmel memory working properly.
+ * 6-15-17      Minor corrections and cleanup on Atmel Read and write routines
  *              
  ************************************************************************************************************/
 
