@@ -58,7 +58,8 @@ union {
 #define highByte byte[1]  
 
 /** INCLUDES *******************************************************/
-#include <XC.h>
+// #include <XC.h>
+#include <plib.h>
 
 #include "usb.h"
 #include "HardwareProfile.h"
@@ -222,11 +223,7 @@ int main(void) {
     unsigned short DMXdataCounter = 0;
     unsigned char ch;
     #define ATMEL_DATA_SIZE 16
-    unsigned char AtmelOutData[ATMEL_DATA_SIZE];
-    unsigned char AtmelInData[ATMEL_DATA_SIZE];
-    unsigned int bufferAddress = 0x0000;
-    unsigned short page = 0x0000;
-    unsigned char outTest[] = "Testing READ";
+    unsigned char outTest[] = "Oh I pray that there is a way forward";
     short outTestLength;
 
     outTestLength = strlen(outTest);
@@ -238,26 +235,29 @@ int main(void) {
         
     InitializeSystem();
     
-    #define ATMEL_BUFFER 2
-    short pageNum = 1945;
-    short byteAddress = 100;
+    #define ATMEL_BUFFER 1
+    short pageNum = 333;
+    short byteAddress = 44;
         
     DelayMs(100);
-    printf("\r\rNO WRITE: BUFFER #%d, START BYTE #%d, PAGE #%d", ATMEL_BUFFER, byteAddress, pageNum);
-    initAtmelSPI();
+    printf("\r\rSpiChnOpen: BUFFER #%d, START BYTE #%d, PAGE #%d", ATMEL_BUFFER, byteAddress, pageNum);
+    // initAtmelSPI();
+    
+    SpiChnOpen(SPI_CHANNEL2, SPI_OPEN_MSTEN | SPI_OPEN_MODE8 | SPI_OPEN_CKE_REV | SPI_OPEN_ON, 16);
+
+    
     AtmelBusy(1);  
    
     #define PAGESIZE 528    
     unsigned char AtmelRAM1[PAGESIZE];
     unsigned char AtmelRAM2[PAGESIZE];      
         
-    //printf("\rErasing FLASH");
-    //EraseFLASHpage(pageNum);
-    //printf("\rWriting to buffer");
-    //WriteAtmelBytes(ATMEL_BUFFER, outTest, byteAddress , outTestLength);
-    //printf("\rProgramming flash");
-    //ProgramFLASH (ATMEL_BUFFER, pageNum);
-    
+    printf("\rErasing FLASH");
+    EraseFLASHpage(pageNum);
+    printf("\rWriting to buffer");
+    WriteAtmelBytes(ATMEL_BUFFER, outTest, byteAddress , outTestLength);
+    printf("\rProgramming flash");
+    ProgramFLASH (ATMEL_BUFFER, pageNum);
     
     DelayMs(100);
     printf("\rTransferring flash");

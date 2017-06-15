@@ -17,18 +17,17 @@
  * 6-14-17          Added corrected version of initAtmelSPI()
  *                  Renamed ReadAtmelBuffer(), WriteAtmelBuffer(), eliminated line routines.
  *                  Simplified page addressing, renamed routines
+ * 6-15-17          Minor corrections and cleanup
  */
 
-#include <XC.h>
+// #include <XC.h>
+#include <plib.h>
 #include "AT45DB161.h"
 
 #define FALSE 0
 #define TRUE !FALSE
 
-#define SPI_START_CFG_A     (PRI_PRESCAL_1_1 | SEC_PRESCAL_1_1 | MASTER_ENABLE_ON | SPI_CKE_ON | SPI_SMP_ON)
-#define SPI_START_CFG_B     (SPI_ENABLE)
-#define OpenSPI2(config1, config2)
-#define initAtmelSPI() OpenSPI2(SPI_START_CFG_A, SPI_START_CFG_B) // Initialize SPI #2 for Atmel
+
 
 union {
     unsigned char byte[2];
@@ -38,11 +37,15 @@ union {
 #define lowByte byte[0]
 #define highByte byte[1]  
 
-void initSPI(void){
-   OpenSPI2(SPI_START_CFG_A, SPI_START_CFG_B); // Initialize SPI #2 for Atmel 
+// Set SPI port #2 for 8 bit Master Mode
+// Sample Phase for the input bit at the end of the data out time.
+// Set the Clock Edge reversed: transmit from active to idle.
+// Use 80 Mhz / 2 = 40 Mhz clock
+void initAtmelSPI(void){
+   SpiChnOpen(ATMEL_SPI_CHANNEL, SPI_OPEN_MSTEN | SPI_OPEN_MODE8 | SPI_OPEN_CKE_REV | SPI_OPEN_ON | SPI_OPEN_SMP_END, 2);  
 }
 
-// This version uses the PIC SPI port fro PIC32's
+// This version uses the PIC 32 SPI port 
 int SendReceiveSPI(unsigned char dataOut){
 int dataIn;
 
@@ -55,7 +58,7 @@ int dataIn;
 
 // This function writes an entire 528 byte page to the Atmel memory buffer.
 // *buffer points to input array.
-int WriteAtmelPage (unsigned char bufferNum, unsigned char *buffer){
+int WriteAtmelBuffer (unsigned char bufferNum, unsigned char *buffer){
 int i;
 
  	if (buffer==NULL) return(FALSE); // ERROR
@@ -75,7 +78,7 @@ int i;
 	return(TRUE); // No errors - write was successful
 }
 
-int ReadAtmelPage(unsigned char bufferNum, unsigned char *buffer){
+int ReadAtmelBuffer(unsigned char bufferNum, unsigned char *buffer){
 unsigned char dataIn;
 int i;
 
@@ -152,7 +155,7 @@ int EraseEntireFLASH(void){
 // READY/BUSY flag reads high.
 int AtmelBusy (unsigned char waitFlag){	
 unsigned char status, inByte;
-int i;
+int i = 0;
 		
 	ATMEL_CS=0;				
 	SendReceiveSPI(0xD7);	// Send read Status register command		
@@ -161,7 +164,7 @@ int i;
 	// This is the READ/BUSY bit:
 	do {
 		inByte = (unsigned char) SendReceiveSPI(0x00);
-        // printf("\rSTATUS: %X", inByte);
+        // printf("\r#%d: STATUS: %X", i++, inByte);
 		status = (0x80 & inByte); 
 	} while ((0==status)&&(waitFlag));  // Keep looping until status bit goes high, or quit after one loop if waitFlag is false
 
@@ -206,7 +209,6 @@ unsigned char ProgramFLASH (unsigned char bufferNum, unsigned short pageNum){
 unsigned char TransferFLASH (unsigned char bufferNum, unsigned short pageNum){
 
 	if (pageNum>MAX_PAGE) return(FALSE);
-        AtmelBusy(1);                                           // Make sure Atmel isn't busy
         
     convert.integer = (pageNum << 2) & 0xFFFC;        
 
@@ -230,7 +232,6 @@ unsigned char TransferFLASH (unsigned char bufferNum, unsigned short pageNum){
 unsigned char EraseFLASHpage (unsigned short pageNum){
     
 	if (pageNum>MAX_PAGE) return(FALSE);
-        AtmelBusy(1);                                           // Make sure Atmel isn't busy
         
     convert.integer = (pageNum << 2) & 0xFFFC;        
 
@@ -246,7 +247,9 @@ unsigned char EraseFLASHpage (unsigned short pageNum){
 	return(TRUE);
 }
 
-int ReadAtmelBytes (unsigned char bufferNum, unsigned char *buffer, unsigned int bufferAddress, unsigned int numberOfBytes){
+
+
+int ReadAtmelBytes (unsigned char bufferNum, unsigned char *buffer, unsigned short bufferAddress, unsigned short numberOfBytes){
 unsigned char dataIn;
 int i;
 
@@ -279,7 +282,7 @@ int i;
 // The "numberOfBytes" input is the number of bytes that will be 
 // copied from the AtmelWriteArray[] array to the Atmel.
 // If there are no errors, it returns TRUE
-int WriteAtmelBytes (unsigned char bufferNum, unsigned char *buffer, unsigned int bufferAddress, unsigned int numberOfBytes){
+int WriteAtmelBytes (unsigned char bufferNum, unsigned char *buffer, unsigned short bufferAddress, unsigned short numberOfBytes){
 int i;
  
  	if (buffer==NULL) return(FALSE); // ERROR
@@ -302,3 +305,78 @@ int i;
 	ATMEL_CS=1;		
 	return(TRUE); // No errors - write was successful
 }
+
+int MainMemoryPageRead (unsigned char *buffer, unsigned short pageNum, unsigned short bufferAddress, unsigned short numberOfBytes){
+unsigned char dataIn;
+unsigned short lowAddress, midAddress, highAddress;
+int i;
+
+    // Make sure we don't overrun the Atmel page buffer
+	if ((bufferAddress+numberOfBytes) >= PAGESIZE)  
+    
+    if (buffer = NULL) return(FALSE);
+
+    convert.integer = bufferAddress;
+    lowAddress = convert.lowByte;
+    midAddress = convert.highByte & 0x03;
+
+    convert.integer = (pageNum << 2) & 0x3FFC;
+    midAddress = midAddress | convert.lowByte;
+    highAddress = convert.highByte;
+     
+    // Make sure Atmel isn't busy with any previous activity.	    
+	AtmelBusy(1);						
+		
+	ATMEL_CS = 0;				
+    // Send Main Memory Page Read command
+    SendReceiveSPI(0xD2);		
+    // Send page number combined with buffer address
+	SendReceiveSPI((unsigned char) highAddress);
+    SendReceiveSPI((unsigned char) midAddress);
+    SendReceiveSPI((unsigned char) lowAddress);
+    SendReceiveSPI(0);  // Send four don't care bytes
+    SendReceiveSPI(0);
+    SendReceiveSPI(0);
+    SendReceiveSPI(0);
+	
+    // Now read incoming data one byte at a time
+	for(i=0; i<numberOfBytes; i++){
+		dataIn = (unsigned char) SendReceiveSPI(0x00);
+		buffer[i] = dataIn;		
+	}
+	ATMEL_CS = 1;
+	return (TRUE); // No errors - read was successful
+}
+
+
+
+unsigned char storeShortToAtmel(unsigned short pageNum, unsigned short address, unsigned short inData) {
+unsigned char AtmelRAM[2];
+
+    if (address < (PAGESIZE - 1)) {
+        convert.integer = inData;
+        AtmelRAM[0] = convert.lowByte;
+        AtmelRAM[1] = convert.highByte;
+        // Store flash in RAM, Erase flash, overwrite RAM, program flash:
+        TransferFLASH (1, pageNum); 
+        EraseFLASHpage(pageNum);
+        WriteAtmelBytes (1, AtmelRAM, address, 2);
+        ProgramFLASH(1, pageNum);
+        return (TRUE);
+    } else return (FALSE);
+}
+
+unsigned short fetchShortFromAtmel(unsigned short pageNum, unsigned short address) {
+unsigned char AtmelRAM[2];
+
+    if (address < (PAGESIZE - 1)) {
+        // Read two bytes directly from flash without using RAM buffers:
+        TransferFLASH (1, pageNum);
+        ReadAtmelBytes (1, AtmelRAM, address, 2);
+        // Convert two bytes to integer and return result;
+        convert.lowByte = AtmelRAM[0];
+        convert.highByte = AtmelRAM[1];        
+        return (convert.integer);
+    } else return (0);
+}
+

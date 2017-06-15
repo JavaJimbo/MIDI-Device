@@ -11,6 +11,7 @@
  * 6-14-17          Added corrected version of initAtmelSPI()
  *                  Renamed ReadAtmelBuffer(), WriteAtmelBuffer(), eliminated line routines. 
  *                  Simplified page addressing, renamed routines
+ * 6-15-17          Minor corrections and cleanup
  */
 #define PAGEOFFSET 256
 #define PAGESIZE 528
@@ -28,10 +29,7 @@
 #define ATMEL_CS PORTCbits.RC3  
 #define ATMEL_SPI_CHANNEL 2
 
-#define SPI_START_CFG_A     (PRI_PRESCAL_1_1 | SEC_PRESCAL_1_1 | MASTER_ENABLE_ON | SPI_CKE_ON | SPI_SMP_ON)
-#define SPI_START_CFG_B     (SPI_ENABLE)
-#define initAtmelSPI()      OpenSPI2(SPI_START_CFG_A, SPI_START_CFG_B) // Initialize SPI #2 for Atmel
-
+void initAtmelSPI(void);
 int SendReceiveSPI(unsigned char dataOut);
 unsigned char ProgramFLASH (unsigned char RAMbufferNum, unsigned short pageNum);
 unsigned char TransferFLASH (unsigned char bufferNum, unsigned short pageNum);
@@ -42,14 +40,14 @@ int AtmelBusy(unsigned char waitFlag);
 int EraseEntireFLASH(void);
 
 int WriteAtmelBuffer (unsigned char bufferNum, unsigned char *buffer);
-int ReadAtmelPage(unsigned char bufferNum, unsigned char *buffer);
+int ReadAtmelBuffer(unsigned char bufferNum, unsigned char *buffer);
 
-int ReadAtmelBytes (unsigned char bufferNum, unsigned char *buffer, unsigned int bufferAddress, unsigned int numberOfBytes);
-int WriteAtmelBytes (unsigned char bufferNum, unsigned char *buffer, unsigned int bufferAddress, unsigned int numberOfBytes);
+int ReadAtmelBytes (unsigned char bufferNum, unsigned char *buffer, unsigned short bufferAddress, unsigned short numberOfBytes);
+int WriteAtmelBytes (unsigned char bufferNum, unsigned char *buffer, unsigned short bufferAddress, unsigned short numberOfBytes);
 
-unsigned long fetchLongInteger(unsigned short pageNum, unsigned short position);
-unsigned char storeLongInteger(unsigned short pageNum, unsigned short position, unsigned long longValue);
+int MainMemoryPageRead (unsigned char *buffer, unsigned short pageNum, unsigned short bufferAddress, unsigned short numberOfBytes);
 
-
+unsigned char storeShortToAtmel(unsigned short pageNum, unsigned short address, unsigned short inData);
+unsigned short fetchShortFromAtmel(unsigned short pageNum, unsigned short address);
 
 
