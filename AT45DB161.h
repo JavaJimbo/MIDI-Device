@@ -12,6 +12,7 @@
  *                  Renamed ReadAtmelBuffer(), WriteAtmelBuffer(), eliminated line routines. 
  *                  Simplified page addressing, renamed routines
  * 6-15-17          Minor corrections and cleanup
+ * 6-19-17:         Added routines for storing and fetching two byte integers
  */
 #define PAGEOFFSET 256
 #define PAGESIZE 528
