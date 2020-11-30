@@ -120,9 +120,9 @@
     
     /** SWITCH *********************************************************/
     // #define mInitSwitch2()      TRISDbits.TRISD6=1;
-    #define mInitSwitch2()      TRISEbits.TRISE6=1;  // $$$$
-    #define mInitSwitch3()      TRISDbits.TRISD7=1;
-    #define mInitAllSwitches()  mInitSwitch2();mInitSwitch3();
+    //#define mInitSwitch2()      TRISEbits.TRISE6=1;  // $$$$
+    //#define mInitSwitch3()      TRISDbits.TRISD7=1;
+    //#define mInitAllSwitches()  mInitSwitch2();mInitSwitch3();
     // #define sw2                 PORTDbits.RD6
     #define sw2                 PORTEbits.RE6   // $$$$
     #define sw3                 PORTDbits.RD7

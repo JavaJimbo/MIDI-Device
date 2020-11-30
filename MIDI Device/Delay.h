@@ -61,7 +61,6 @@
 //#define GetInstructionClock()	(GetSystemClock()/1)
 //#define GetPeripheralClock()	(GetInstructionClock()/1)	// Set your divider according to your Peripheral Bus Frequency configuration fuse setting
 
-
 void Delay10us(long dwCount);
 void DelayMs(long ms);
 void DelayUs(unsigned short Count);

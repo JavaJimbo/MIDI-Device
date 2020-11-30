@@ -12,5 +12,4 @@ build/default/production/_ext/1472/main.o:  \
  ../HardwareProfile.h  \
 ../HardwareProfile\ -\ PIC32MX795F512L\ PIM.h  \
  ../usb_function_midi.h  \
-../Delay.h  \
-../AT45DB161.h 
+../Delay.h 

@@ -12,6 +12,22 @@
             <asminc-extensions/>
             <sourceEncoding>ISO-8859-1</sourceEncoding>
             <make-dep-projects/>
+            <sourceRootList>
+                <sourceRootElem>..</sourceRootElem>
+                <sourceRootElem>..\..\..\..\Microchip\Help</sourceRootElem>
+                <sourceRootElem>..\..\..\..\Microchip\Include\USB</sourceRootElem>
+                <sourceRootElem>..\..\..\..\Microchip\USB</sourceRootElem>
+                <sourceRootElem>..\..\..\..\Microchip\Include</sourceRootElem>
+            </sourceRootList>
+            <confList>
+                <confElem>
+                    <name>default</name>
+                    <type>2</type>
+                </confElem>
+            </confList>
+            <formatting>
+                <project-formatting-style>false</project-formatting-style>
+            </formatting>
         </data>
     </configuration>
 </project>

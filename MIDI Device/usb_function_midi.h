@@ -78,7 +78,7 @@ typedef union
             BYTE CN  :4;
             BYTE MIDI_0;
             BYTE MIDI_1;
-            BYTE MIDI_2;
+            BYTE MIDI_2;            
         }; 
         struct
         {
@@ -86,7 +86,7 @@ typedef union
             BYTE CableNumber     :4;
             BYTE DATA_0;
             BYTE DATA_1;
-            BYTE DATA_2;    
+            BYTE DATA_2;                
         };
     };
 } USB_AUDIO_MIDI_EVENT_PACKET, *P_USB_AUDIO_MIDI_EVENT_PACKET;
